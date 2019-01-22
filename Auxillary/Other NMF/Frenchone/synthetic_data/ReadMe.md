@@ -1,0 +1,1 @@
+Folder where the synthetic data are stored

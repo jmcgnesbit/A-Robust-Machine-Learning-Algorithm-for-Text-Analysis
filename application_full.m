@@ -11,7 +11,10 @@
 %   their online appendix, they explain how they generate these
 %   distributions. The way it is implemented for the NMF is to weight each
 %   document by a speaker in a meeting by the number of spoken words and
-%   then sum these weighted topics. 
+%   then sum these weighted topics. For the LDA, I need to implement this. In order to
+%   do so I need the topic assignment (as opposed to just the predictive
+%   distribution), which means I will likely have to code up my own Gibbs
+%   sampler
 
 
 clc 
@@ -74,7 +77,7 @@ docs(18762) = {'true'};
 
 docs_sub = docs(txt_dataraw(:,3) == section_ind);
 % Section and members
-raw_section = txt_dataraw(2:end,3);
+raw_section = txt_dataraw(:,3);
 section = raw_section(raw_section == section_ind);
 members = string(txt_textraw(2:end,2));
 members = members(raw_section == section_ind);
@@ -101,27 +104,24 @@ prop_matrix = tdmat ./ N_d;
 % Weighting matrix V*D matrix. Each column vector j is just N_j repeated V times
 W = repmat(N_d, V, 1);
 
-save(['HPCin' num2str(section_ind) '.mat'], 'prop_matrix', 'W')
+%save(['HPCin' num2str(section_ind) '.mat'], 'prop_matrix', 'W')
 
-outloop = 2;
-nmfiters = 2;
-store_B = zeros(outloop, V, K);
-store_Theta = zeros(outloop, K, sub_D);
-iterscomp = zeros(outloop,1);
-norm = zeros(outloop,1);
-
-for ii = 1:outloop
-    ii
-    %Run NNMF
-    [B, Theta, iterscomp(ii), norm(ii)] = mynmf(prop_matrix, W, K, nmfiters, tol);
-    
-    store_B(ii, :, :) = B;
-    store_Theta(ii, :, :) = Theta;
-  
-end
-
-load( )
-
+% outloop = 2;
+% nmfiters = 2;
+% store_B = zeros(outloop, V, K);
+% store_Theta = zeros(outloop, K, sub_D);
+% iterscomp = zeros(outloop,1);
+% norm = zeros(outloop,1);
+% 
+% for ii = 1:outloop
+%     ii
+%     %Run NNMF
+%     [B, Theta, iterscomp(ii), norm(ii)] = mynmf(prop_matrix, W, K, nmfiters, tol);
+%     
+%     store_B(ii, :, :) = B;
+%     store_Theta(ii, :, :) = Theta;
+%   
+% end
 
 
 %% Dates and meeting numbers 
@@ -232,43 +232,65 @@ window_index = logical(window_index);
 transmem_index = ismember(design_members, transmetmem);
 
 final_index = and(window_index, transmem_index);
+
+%% Post HPC computation
+%outdir = 'C:\Users\jmcgn\OneDrive\Documents\LDA output'
+outdir = 'Output/sec1';
+listing = dir(outdir);
+filenames = string({listing(3:28).name});
+runnum = erase(filenames(contains(filenames, 'B')), ["1B", ".mat"]);
+
+numberofiters = 20*size(runnum,2);
+
 % Preallocate
-beta = zeros(outloop, 4, 4); 
-beta_nc = zeros(outloop, 4, 4);
-measure = zeros(outloop, design_size, 4);
-iterscomp = zeros(outloop,1);
-norm = zeros(outloop,1);
+beta = zeros(numberofiters, 4, 4); 
+beta_nc = zeros(numberofiters, 4, 4);
+measure = zeros(numberofiters, design_size, 4);
+iterscomp = zeros(numberofiters,1);
+norm = zeros(numberofiters,1);
 
-for ii = 1:outloop
-     [beta(ii, :, :), beta_nc(ii, :, :), measure(ii,:, :)] = objint(store_Theta, table_design, final_index);  
+ticount = 0;
+for i = 1:size(runnum,2)
+    SB = load(strcat('1B', runnum(i), '.mat'));
+    store_B = SB.store_B;
+    ST = load(strcat('1Theta', runnum(i), '.mat'));
+    store_Theta = ST.store_Theta;
+    
+    for ii = 1:20
+        ticount = ticount + 1;
+        [beta(ticount, :, :), beta_nc(ticount, :, :), measure(ticount,:, :)] = ...
+            objint(store_Theta(ii, :,:), table_design, final_index);  
+    end
+
 end
 
 
-indices = [13016435, 13025769, 13025770, 13025771, 13025772, 13025773];
-%indices = [13016435];
-chunksize = 20;
-outloop2 = size(indices,2)*chunksize;
-% % Preallocate
-beta = zeros(outloop2, 4, 4); 
-beta_nc = zeros(outloop2, 4, 4);
-measure = zeros(outloop2, sub_D, 4);
-iterscomp = zeros(outloop2,1);
-norm = zeros(outloop2,1);
-% 
-store_B = zeros(outloop2, V, K);
-store_Theta = zeros(outloop2, K, sub_D);
-   
-for i = 1:size(indices,2)
-    tempb = load(['B' num2str(indices(i)) '.mat']);
-    store_B(1 + chunksize*(i - 1): chunksize*i,:,:) = tempb.store_B;
-    temptheta = load(['Theta' num2str(indices(i)) '.mat']);
-    store_Theta(1 + chunksize*(i - 1): chunksize*i,:,:) = temptheta.store_Theta;
-    tempobs = load(['obsint' num2str(indices(i)) '.mat']);
-    beta(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.beta;
-    beta_nc(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.beta_nc;
-    measure(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.measure;
-    clear tempb temptheta tempobs
-end
+
+% indices = [13016435, 13025769, 13025770, 13025771, 13025772, 13025773];
+% %indices = [13016435];
+% chunksize = 20;
+% outloop2 = size(indices,2)*chunksize;
+% % % Preallocate
+% beta = zeros(outloop2, 4, 4); 
+% beta_nc = zeros(outloop2, 4, 4);
+% measure = zeros(outloop2, sub_D, 4);
+% iterscomp = zeros(outloop2,1);
+% norm = zeros(outloop2,1);
+% % 
+% store_B = zeros(outloop2, V, K);
+% store_Theta = zeros(outloop2, K, sub_D);
+%    
+% for i = 1:size(indices,2)
+%     tempb = load(['B' num2str(indices(i)) '.mat']);
+%     store_B(1 + chunksize*(i - 1): chunksize*i,:,:) = tempb.store_B;
+%     temptheta = load(['Theta' num2str(indices(i)) '.mat']);
+%     store_Theta(1 + chunksize*(i - 1): chunksize*i,:,:) = temptheta.store_Theta;
+%     tempobs = load(['obsint' num2str(indices(i)) '.mat']);
+%     beta(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.beta;
+%     beta_nc(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.beta_nc;
+%     measure(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.measure;
+%     clear tempb temptheta tempobs
+% end
 
 %% Run LDA
 mdl = fitlda(sub_tdmat', K, 'solver', 'cgs',  'Verbose', 1,...

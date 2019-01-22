@@ -1,0 +1,18 @@
+Karan Sikka, UCSD, 8/10/13
+% contact: ksikka@ucsd.edu/karan.sikka1@gmail.com, http://mplab.ucsd.edu/~ksikka/
+
+Description: This code is used to learn an LDA model on a BoW corpus and employs variational approximation (VA) method for learning. In brief VA method is a generalized version of expecation maximiation and also comprises of two steps- E and M step. Although I have a hand-written derivation, at this time I will refer you to Blei's original LDA paper "Latent dirichlet allocation,2003, JMLR" to understand the method. Most of my formulation and variables follow the convention used in his paper. May be I could upload the hand-written derivation sometime in future. 
+
+How to run the code: 
+1. I have created two scripts nips_run.m and news_run.m to highlight running two models. These are self-explainatory. 
+2. I have also added two rar files to show the top-words according to highest probabilities learned for each topic using the NIPS and 20-News dataset. This files are nips_topics_discovered_50 and topics_20news_110. These contain 50 topics for NIPS and 110 topics for 20-News learned using this code. Each topic has it's own .txt file, showing the evolution of topics with number of iterations.   
+
+
+Files of interest:
+1. learn_lda.m- Main script for running LDA.
+2. lda_Estep.m- Script for Expectation step in LDA.
+3. lda_Mstep.m- Script for Maximization step in LDA. 
+4. lda_eval_lik.m- Evaluates likelihood in every-iteration
+5. converged.m- Check for convergence
+
+I will be more than happy to know about any bugs on this code. My contact information is above. 

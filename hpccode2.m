@@ -36,7 +36,7 @@ for ii = 1:outloop
   
 end
 
-save(['./Output/B' num2str(j) '.mat'], 'store_B', '-v7.3')
-save(['./Output/Theta' num2str(j) '.mat'], 'store_Theta', '-v7.3')
+save(['./Output/2B' num2str(j) '.mat'], 'store_B', '-v7.3')
+save(['./Output/2Theta' num2str(j) '.mat'], 'store_Theta', '-v7.3')
 
 end
