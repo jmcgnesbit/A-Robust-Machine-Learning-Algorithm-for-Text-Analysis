@@ -6,15 +6,16 @@ function measures = measure_func(Theta, meetings)
     % For each meeting
     for i = 1:num_met
         index = (meetings == i);
+        sub_Theta = Theta(:, index);
         % Computes the mean for each topic across the speakers in meeting i
-        pibar = mean(Theta(:, index), 2); 
+        pibar = mean(sub_Theta, 2); 
         
         % Bhattacharyya coefficient
-        measures(index, 1) = sum(sqrt((Theta(:, index) + eps) .* (pibar + eps)), 1)';
+        measures(index, 1) = sum(sqrt((sub_Theta + eps) .* (pibar + eps)), 1)';
         % Dot product
-        measures(index, 3) = sum(Theta(:, index) .* pibar, 1)';
+        measures(index, 3) = sum(sub_Theta .* pibar, 1)';
         %  Kullback-Leibler
-        measures(index, 4) = exp( - sum(pibar .* (log(pibar + eps) - log(Theta(:,index) + eps)),1));
+        measures(index, 4) = exp( - sum(pibar .* (log(pibar + eps) - log(sub_Theta + eps)),1));
     end
     
     % Hellinger distance 

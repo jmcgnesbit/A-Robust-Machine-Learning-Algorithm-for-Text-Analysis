@@ -17,14 +17,13 @@
 %   sampler
 
 
+
+%% The current version will generate things up to the NMF, in which case we switch over to the HPC, then reimport the HPC files and compute the objs of interest
 clc 
 clear
 
 %% Options
-section_ind = 1;
-test = 1; % Testing mode. 1 = low iterations, no parallel loop; 0 = high iterations, parellel loop
-graph = 1; % Render figures. 1 = render figures; 0 = don't render
-
+section_number = 1;
 % Directory options
 addpath(genpath(pwd)) % include subfolders in working directory
 % Picture directory
@@ -36,10 +35,7 @@ fig_height = 2.5;
 fig_width = 6;
 fig_fontsize = 12;
 
-kmax = 10; % to plot k most often members
-
 % NNMF options
-maxiter = 1000;
 tol = 0.000001;
 K = 40;
 outloop = optimaldraws(1, 0.1, 0.1); % 1060 as D = 1
@@ -52,6 +48,7 @@ equalepsdelta(1, 120)
 %% Load up and initial data cleaning
 % Load for_pepe.csv
 [txt_dataraw, txt_textraw] = xlsread('for_pepe.csv'); 
+prat_theta = txt_dataraw(:, 5:44)';
 
 docs = txt_textraw(2:end,4);
 % Some manual changes (it was coded as TRUE, but matlab didn't like this)
@@ -62,11 +59,11 @@ docs(17038) = {'true'};
 docs(18560) = {'true'};
 docs(18762) = {'true'};
 
-% % Tokenize documents
-% cleanDocuments = tokenizedDocument(docs);
-% bow = bagOfWords(cleanDocuments); 
-% tdmat = bow.Counts';
-% 
+% Tokenize documents
+cleanDocuments = tokenizedDocument(docs);
+bow = bagOfWords(cleanDocuments); 
+tdmat_full = bow.Counts';
+
 % % Wordcloud
 % figure('Name', 'Wordcloud')
 % wordcloud(bow)
@@ -75,19 +72,21 @@ docs(18762) = {'true'};
 
 %% Section subsample
 
-docs_sub = docs(txt_dataraw(:,3) == section_ind);
-% Section and members
-raw_section = txt_dataraw(:,3);
-section = raw_section(raw_section == section_ind);
+raw_section = txt_dataraw(:,3); % section column
+section_index = (raw_section == section_number); % Section subsample index
+docs_sub = docs(section_index); % Docs in subsample
+section = raw_section(section_index); % section in subsample
 members = string(txt_textraw(2:end,2));
-members = members(raw_section == section_ind);
+members = members(section_index); % Members in subsample
 
 % Tokenize documents
 cleanDocuments = tokenizedDocument(docs_sub);
 bow = bagOfWords(cleanDocuments); 
 tdmat = bow.Counts'; %transpose to get term by document
 % Check for columns with all zeros
-find(all(tdmat == 0))
+if any(all(tdmat == 0))
+    error('Empty columns in TDMAT')
+end
 
 % Sizes
 [V,D] = size(tdmat);
@@ -106,6 +105,7 @@ W = repmat(N_d, V, 1);
 
 %save(['HPCin' num2str(section_ind) '.mat'], 'prop_matrix', 'W')
 
+%% NMF which is currently done on HPC
 % outloop = 2;
 % nmfiters = 2;
 % store_B = zeros(outloop, V, K);
@@ -126,19 +126,21 @@ W = repmat(N_d, V, 1);
 
 %% Dates and meeting numbers 
 dates = xlsread('dates.xlsx'); %Import dates with days
+dates(dates == 19880517) = []; % There is a missing meeting here for some reason!!!
 dates_dt = datetime(string(dates), 'InputFormat', 'yyyyMMdd'); % Convert to datetime
-dates_cat = grp2idx(categorical(txt_dataraw(txt_dataraw(:,3) == section_ind,1))); % Convert date vector in txt_dataraw to meeting number
+dates_cat = grp2idx(categorical(txt_dataraw(txt_dataraw(:,3) == section_number,1))); % Convert date vector in txt_dataraw to meeting number
 num_meeting = size(unique(dates),1);
 
-%% Resampling thing to generate topics for speaker meeting pairs. I think the 
-% best way to do this, is to weight each speaker - meeting - injection 
-% by its relative contribution
+%% Construct member matrix, meeting number, weights for constructing i,t,s
+% and number of stems
 
-% Number of stems
+% Number of stems and weighs
 design_members= [];
 design_meeting = [];
 Theta_speak_meet = [];
 design_stems = [];
+weights = {};
+
 for j = 1:num_meeting
     meeting_ind = (dates_cat == j); % find indices of meeting j
     meet_mem = unique(members(meeting_ind)); % find members attending meeting j
@@ -148,21 +150,19 @@ for j = 1:num_meeting
         member_ind = (members == meet_mem(i));
         combo_ind = and(meeting_ind, member_ind);
         mem_N_d = N_d(combo_ind);
-        weights = mem_N_d ./ sum(mem_N_d);
-        Theta_speak_meet = [Theta_speak_meet; (weights * store_Theta(:, combo_ind)')];
-        
+        weights = [weights, [{mem_N_d ./ sum(mem_N_d)};{combo_ind}]];
         design_stems = [design_stems; sum(any(tdmat(:,combo_ind) ~=0, 2))]; % find non-zero entries in rows (terms) of tdmat
     end
 end
 
-design_stems = full(design_stems);
+design_stems = full(design_stems); % make non-sparse
 
 %% Regression stuff
 
 % Twoday
 covariate_dataraw = xlsread('term_document_top2_all_clean.xlsx', 'covariate');
 twoday = covariate_dataraw(:,1);
-
+twoday(7) = []; % again the missing meeting here
 
 % Get year and month of txt_dates
 [txt_y,txt_m] = ymd(dates_dt);
@@ -170,8 +170,10 @@ twoday = covariate_dataraw(:,1);
 % Transparency dummy
 trans_date = datetime('19931116', 'InputFormat', 'yyyyMMdd');
 trans_meeting = find(dates == 19931116); % meeting number
-trans = [zeros(trans_meeting,1); ones((num_meeting - trans_meeting), 1)]; 
+trans = zeros(num_meeting, 1);
+trans(trans_meeting:end) = 1;
 transmetmem = design_members(design_meeting == trans_meeting);
+transmetmem(transmetmem == "STAFF") = [];
 
 % NBER recession dummy
 [reces_raw, reces_text] = xlsread('USREC.xls', 'A1604:B1825');
@@ -203,6 +205,17 @@ design_transparency = zeros(design_size,1);
 design_recession = zeros(design_size,1);
 design_EPU = zeros(design_size,1);
 design_twoday = zeros(design_size,1);
+design_phd_ind = zeros(design_size,1);
+design_phd_sum = zeros(design_size,1);
+% Number of phds
+allmembers = unique(design_members);
+phd_ind = xlsread('phds.xlsx');
+phd_indi = [allmembers, phd_ind];
+
+for i = 1:design_size
+    index = find(allmembers == design_members(i));
+    design_phd_ind(i) = phd_ind(index);
+end
 
 for i = 1:num_meeting
     meeting_ind = (design_meeting == i);
@@ -210,16 +223,19 @@ for i = 1:num_meeting
     design_recession(meeting_ind ) = reces_trim(i);
     design_EPU(meeting_ind) = EPU_trim(i);
     design_twoday(meeting_ind ) = twoday(i);
+    sum_phd = sum(design_phd_ind(meeting_ind));
+    design_phd_sum(meeting_ind) = sum_phd;
 end
 
 
 % Create table
-table_design = table(design_meeting, design_transparency, design_recession, design_EPU, design_twoday, design_stems, design_members);
-table_design.Properties.VariableNames = {'MeetingNumber', 'Transparency', 'Recession', 'EPU', 'Twoday', 'Stems', 'Members'};
+table_design = table(design_meeting, design_transparency, design_recession, design_EPU, design_twoday, design_stems, design_members, design_phd_sum);
+table_design.Properties.VariableNames = {'MeetingNumber', 'Transparency', 'Recession', 'EPU', 'Twoday', 'Stems', 'Members', 'Phds'};
 table_design;
 
 % Get dates of meetings in window
-start_meet = find(dates == 19891114);
+%start_meet = find(dates == 19891114);
+start_meet = find(dates == 19891219);
 end_meet = find(dates == 19971112) - 1;
 
 start_num = find(table_design.MeetingNumber == start_meet, 1, 'first');
@@ -230,15 +246,14 @@ window_index(start_num:end_num) = 1;
 window_index = logical(window_index);
 
 transmem_index = ismember(design_members, transmetmem);
-
 final_index = and(window_index, transmem_index);
 
 %% Post HPC computation
-%outdir = 'C:\Users\jmcgn\OneDrive\Documents\LDA output'
-outdir = 'Output/sec1';
+
+outdir = ['Output/sec', num2str(section_number)];
 listing = dir(outdir);
-filenames = string({listing(3:28).name});
-runnum = erase(filenames(contains(filenames, 'B')), ["1B", ".mat"]);
+filenames = string({listing(3:end).name});
+runnum = erase(filenames(contains(filenames, 'B')), [[num2str(section_number), 'B'], ".mat"]);
 
 numberofiters = 20*size(runnum,2);
 
@@ -251,65 +266,41 @@ norm = zeros(numberofiters,1);
 
 ticount = 0;
 for i = 1:size(runnum,2)
-    SB = load(strcat('1B', runnum(i), '.mat'));
+    SB = load(strcat(num2str(section_number), 'B', runnum(i), '.mat'));
     store_B = SB.store_B;
-    ST = load(strcat('1Theta', runnum(i), '.mat'));
+    ST = load(strcat(num2str(section_number), 'Theta', runnum(i), '.mat'));
     store_Theta = ST.store_Theta;
     
     for ii = 1:20
         ticount = ticount + 1;
         [beta(ticount, :, :), beta_nc(ticount, :, :), measure(ticount,:, :)] = ...
-            objint(store_Theta(ii, :,:), table_design, final_index);  
+            objint(squeeze(store_Theta(ii, :,:)), table_design, final_index, weights);  
     end
 
 end
 
 
-
-% indices = [13016435, 13025769, 13025770, 13025771, 13025772, 13025773];
-% %indices = [13016435];
-% chunksize = 20;
-% outloop2 = size(indices,2)*chunksize;
-% % % Preallocate
-% beta = zeros(outloop2, 4, 4); 
-% beta_nc = zeros(outloop2, 4, 4);
-% measure = zeros(outloop2, sub_D, 4);
-% iterscomp = zeros(outloop2,1);
-% norm = zeros(outloop2,1);
-% % 
-% store_B = zeros(outloop2, V, K);
-% store_Theta = zeros(outloop2, K, sub_D);
-%    
-% for i = 1:size(indices,2)
-%     tempb = load(['B' num2str(indices(i)) '.mat']);
-%     store_B(1 + chunksize*(i - 1): chunksize*i,:,:) = tempb.store_B;
-%     temptheta = load(['Theta' num2str(indices(i)) '.mat']);
-%     store_Theta(1 + chunksize*(i - 1): chunksize*i,:,:) = temptheta.store_Theta;
-%     tempobs = load(['obsint' num2str(indices(i)) '.mat']);
-%     beta(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.beta;
-%     beta_nc(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.beta_nc;
-%     measure(1 + chunksize*(i - 1): chunksize*i,:, :) = tempobs.measure;
-%     clear tempb temptheta tempobs
-% end
-
 %% Run LDA
-mdl = fitlda(sub_tdmat', K, 'solver', 'cgs',  'Verbose', 1,...
-    'LogLikelihoodTolerance',0.000001, 'IterationLimit', 1000, ...
-    'InitialTopicConcentration', 50, 'WordConcentration', .025*V);
-
-lda_Theta = mdl.DocumentTopicProbabilities';
-lda_B = mdl.TopicWordProbabilities';
-
-[lda_beta, lda_beta_nc, lda_measure] = objint(lda_Theta, sub_table_design, window_index);
+% mdl = fitlda(tdmat', K, 'solver', 'cgs',  'Verbose', 1,...
+%     'LogLikelihoodTolerance',0.000001, 'IterationLimit', 1000, ...
+%     'InitialTopicConcentration', 50, 'WordConcentration', .025*V, ...
+%     'FitTopicProbabilities', false, 'FitTopicConcentration', false);
+% 
+% lda_Theta = mdl.DocumentTopicProbabilities';
+% lda_B = mdl.TopicWordProbabilities';
+prat_theta_trim = prat_theta(:, section_index);
+[lda_beta, lda_beta_nc, lda_measure] = objint(prat_theta_trim, table_design, final_index, weights);
+%objint(lda_Theta, table_design, window_index, weights);
 
 % 
 % %% Product test
 % P1 = squeeze(store_B(1,:,:)) * squeeze(store_Theta(1,:,:));
 % P2 = squeeze(store_B(2,:,:)) * squeeze(store_Theta(2,:,:));
 %% Min and max
-measure1 = 2;
+%[bhat, hell, dotp, klsim]
+measure1 = 1;
 measure1_name = 'HD'
-measure2 = 3;
+measure2 = 4;
 measure2_name = 'DP'
 
 min_beta = min(beta(:, :, 1), [], 1);
@@ -333,6 +324,8 @@ out_tab = table(meas1_tab_nc,meas2_tab, measure2_tab_nc,measure2_tab);
 out_tab.Properties.VariableNames = {[measure1_name '_nocont'], measure1_name, [measure2_name '_nocont'], measure2_name};
 out_tab.Properties.RowNames = {'dtrans', 'se', 'min', 'max'};  
 
+numberofobs = sum(final_index)
+section_number
 out_tab
 
 % Pvalues
@@ -350,12 +343,12 @@ lda_beta_nc(measure2,4)
 avg = zeros(num_meeting, 4);
 for j = 1:4  % for each of the 4 measures
     for i = 1:num_meeting - 1 % for each meeting
-        index = (dates_cat(index_section) == i); % the documents pertaining to meeting i
+        index = (design_meeting == i); % the documents pertaining to meeting i
         avg(i, j) = mean(lda_measure(index, j)); %take the average
     end
 end
 
-figure('Name', 'avg')
+figure('Name', [num2str(section_number), 'avg'])
 meeting_dates = dates_dt(start_meet:end_meet);
 % Measure1
 plot(meeting_dates, avg(start_meet:end_meet, measure1), 'DisplayName', ...
@@ -387,7 +380,7 @@ avg_measure = zeros(outloop, num_meeting, 4);
 for k = 1:outloop % for each iteration
     for j = 1:4 % for each of the 4 measures
         for i =  1:num_meeting - 1 % for each meeting
-            index = (dates_cat(index_section) == i); % the documents pertaining to meeting i
+            index = (design_meeting == i); % the documents pertaining to meeting i
             avg_measure(k, i, j) = mean(measure(k, index, j));
         end
     end
@@ -396,7 +389,7 @@ end
 min_avg = squeeze(min(avg_measure, [], 1));
 max_avg = squeeze(max(avg_measure, [], 1));
 
-figure('Name', 'avg2')
+figure('Name',  [num2str(section_number), 'avg2'])
 % HD
     plot_min = min_avg(start_meet:end_meet, measure1);
     plot_max = max_avg(start_meet:end_meet, measure1);
@@ -428,7 +421,7 @@ recessionplot;
 
 
 
-figure('Name', 'avg3')
+figure('Name',  [num2str(section_number),'avg3'])
 % KL
     plot_min = min_avg(start_meet:end_meet, measure2);
     
